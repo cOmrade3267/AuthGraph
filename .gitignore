@@ -1,0 +1,6 @@
+secrets/
+*.pem
+.env
+bot-authgraph
+authgraph-bot
+*.log

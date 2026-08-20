@@ -1,0 +1,223 @@
+rules:
+  # ---------------------------------------------------------------
+  # Rule 1: Shell invocation with concatenated / formatted arguments
+  # This is the HIGH-confidence CWE-78 pattern.
+  #
+  # WHY "sh -c" specifically?
+  #   exec.Command("sh", "-c", payload) passes `payload` to a shell.
+  #   If `payload` is built from user input, the shell will interpret
+  #   metacharacters like ; | && ` $() — that's command injection.
+  #
+  #   exec.Command("ping", userInput) does NOT invoke a shell, so
+  #   metacharacters are treated as literal arguments to `ping`.
+  #   That's a different, lower-severity issue (argument injection).
+  # ---------------------------------------------------------------
+  - id: go-cwe-78-shell-command-injection-concat
+    # pattern-either: match if ANY of these sub-patterns match (OR logic)
+    pattern-either:
+      # --- String concatenation patterns ---
+      # Matches: exec.Command("sh", "-c", "something" + dynamicVar)
+      # $SHELL metavariable binds to "sh", "bash", "/bin/sh", etc.
+      # $PREFIX binds to the hardcoded string part
+      # $INPUT binds to the dynamic part being concatenated
+      - pattern: exec.Command($SHELL, "-c", $PREFIX + $INPUT)
+      - pattern: exec.Command($SHELL, "-c", $PREFIX + $INPUT, ...)
+      # Right-side concat too: dynamicVar + "something"
+      - pattern: exec.Command($SHELL, "-c", $INPUT + $SUFFIX)
+      - pattern: exec.Command($SHELL, "-c", $INPUT + $SUFFIX, ...)
+
+      # --- fmt.Sprintf patterns ---
+      # Matches: exec.Command("sh", "-c", fmt.Sprintf("cmd %s", input))
+      # $FMT binds to the format string, $FARGS to the arguments
+      - pattern: exec.Command($SHELL, "-c", fmt.Sprintf($FMT, ...))
+
+      # --- Same patterns for exec.CommandContext ---
+      # CommandContext is the context-aware variant, same risk
+      # $CTX binds to the context.Context argument
+      - pattern: exec.CommandContext($CTX, $SHELL, "-c", $PREFIX + $INPUT)
+      - pattern: exec.CommandContext($CTX, $SHELL, "-c", $PREFIX + $INPUT, ...)
+      - pattern: exec.CommandContext($CTX, $SHELL, "-c", $INPUT + $SUFFIX)
+      - pattern: exec.CommandContext($CTX, $SHELL, "-c", $INPUT + $SUFFIX, ...)
+      - pattern: exec.CommandContext($CTX, $SHELL, "-c", fmt.Sprintf($FMT, ...))
+
+    # Severity ERROR = this will fail a CI build (we'll use this later)
+    severity: ERROR
+
+    message: >-
+      OS command injection risk (CWE-78): a dynamically-built string is
+      passed to a shell via exec.Command/exec.CommandContext with "-c".
+      An attacker who controls any part of the concatenated/formatted
+      string can inject arbitrary shell commands. Fix: pass arguments as
+      separate parameters to exec.Command (no shell), or validate/escape
+      input with shlex-equivalent sanitization.
+
+    # Metadata: this is what we'll parse later for the dashboard
+    metadata:
+      cwe:
+        - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      confidence: HIGH
+      impact: HIGH
+      category: security
+      owasp:
+        - A03:2021 - Injection
+
+    languages:
+      - go
+
+  # ---------------------------------------------------------------
+  # Rule 2: Intermediate variable — dynamic string built on one line,
+  # passed to shell exec on a LATER line.
+  #
+  # This is the pattern that Rule 1 CANNOT catch, because Rule 1
+  # only matches single-expression patterns. Here we use Semgrep's
+  # MULTI-STATEMENT matching: the `...` between two lines means
+  # "zero or more statements in between."
+  #
+  # HOW IT WORKS:
+  #   pattern: |
+  #     $VAR = fmt.Sprintf(...)     ← statement 1: build the string
+  #     ...                          ← zero or more lines in between
+  #     exec.Command($S, "-c", $VAR) ← statement 2: pass to shell
+  #
+  #   Semgrep binds $VAR on line 1, then checks if the SAME $VAR
+  #   appears in the exec.Command call anywhere later in the same
+  #   function scope. This is NOT taint analysis — it's syntactic
+  #   matching with variable name binding across statements.
+  #
+  # LIMITATION: This matches by variable NAME, not data flow. If
+  # the variable is reassigned between the two statements, Semgrep
+  # will still match (potential false positive). In practice, this
+  # is rare and acceptable for a HIGH-confidence security rule.
+  # ---------------------------------------------------------------
+  - id: go-cwe-78-shell-command-injection-indirect
+    pattern-either:
+      # --- fmt.Sprintf into variable, then passed to exec.Command ---
+      - pattern: |
+          $VAR = fmt.Sprintf(...)
+          ...
+          exec.Command($SHELL, "-c", $VAR)
+      - pattern: |
+          $VAR = fmt.Sprintf(...)
+          ...
+          exec.Command($SHELL, "-c", $VAR, ...)
+      - pattern: |
+          $VAR := fmt.Sprintf(...)
+          ...
+          exec.Command($SHELL, "-c", $VAR)
+      - pattern: |
+          $VAR := fmt.Sprintf(...)
+          ...
+          exec.Command($SHELL, "-c", $VAR, ...)
+
+      # --- String concatenation into variable, then exec.Command ---
+      - pattern: |
+          $VAR = $A + $B
+          ...
+          exec.Command($SHELL, "-c", $VAR)
+      - pattern: |
+          $VAR := $A + $B
+          ...
+          exec.Command($SHELL, "-c", $VAR)
+      - pattern: |
+          $VAR = $A + $B
+          ...
+          exec.Command($SHELL, "-c", $VAR, ...)
+      - pattern: |
+          $VAR := $A + $B
+          ...
+          exec.Command($SHELL, "-c", $VAR, ...)
+
+      # --- Same patterns for exec.CommandContext ---
+      - pattern: |
+          $VAR = fmt.Sprintf(...)
+          ...
+          exec.CommandContext($CTX, $SHELL, "-c", $VAR)
+      - pattern: |
+          $VAR := fmt.Sprintf(...)
+          ...
+          exec.CommandContext($CTX, $SHELL, "-c", $VAR)
+      - pattern: |
+          $VAR = fmt.Sprintf(...)
+          ...
+          exec.CommandContext($CTX, $SHELL, "-c", $VAR, ...)
+      - pattern: |
+          $VAR := fmt.Sprintf(...)
+          ...
+          exec.CommandContext($CTX, $SHELL, "-c", $VAR, ...)
+      - pattern: |
+          $VAR = $A + $B
+          ...
+          exec.CommandContext($CTX, $SHELL, "-c", $VAR)
+      - pattern: |
+          $VAR := $A + $B
+          ...
+          exec.CommandContext($CTX, $SHELL, "-c", $VAR)
+      - pattern: |
+          $VAR = $A + $B
+          ...
+          exec.CommandContext($CTX, $SHELL, "-c", $VAR, ...)
+      - pattern: |
+          $VAR := $A + $B
+          ...
+          exec.CommandContext($CTX, $SHELL, "-c", $VAR, ...)
+
+    severity: ERROR
+
+    message: >-
+      OS command injection risk (CWE-78): a dynamically-built string
+      (via fmt.Sprintf or concatenation) is stored in a variable and
+      later passed to a shell via exec.Command/exec.CommandContext
+      with "-c". An attacker who controls any part of the formatted
+      string can inject arbitrary shell commands. Fix: pass arguments
+      as separate parameters to exec.Command without shell invocation.
+
+    metadata:
+      cwe:
+        - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      confidence: HIGH
+      impact: HIGH
+      category: security
+      owasp:
+        - A03:2021 - Injection
+
+    languages:
+      - go
+
+# ---------------------------------------------------------------
+  # Rule 3: Direct variable passthrough — no concatenation, no
+  # Sprintf, just a plain variable handed straight to a shell.
+  # This is the SIMPLEST and most common shape of this bug, and
+  # Rules 1/2 don't catch it since they require a transformation
+  # (+ or fmt.Sprintf) before the value reaches exec.Command.
+  # ---------------------------------------------------------------
+  - id: go-cwe-78-shell-command-injection-direct
+    pattern-either:
+      - pattern: exec.Command($SHELL, "-c", $VAR)
+      - pattern: exec.Command($SHELL, "-c", $VAR, ...)
+      - pattern: exec.CommandContext($CTX, $SHELL, "-c", $VAR)
+      - pattern: exec.CommandContext($CTX, $SHELL, "-c", $VAR, ...)
+    pattern-not-either:
+      - pattern: exec.Command($SHELL, "-c", "...")
+      - pattern: exec.CommandContext($CTX, $SHELL, "-c", "...")
+
+    severity: ERROR
+
+    message: >-
+      OS command injection risk (CWE-78): a variable is passed directly
+      to a shell via exec.Command/exec.CommandContext with "-c". If this
+      variable's value can be influenced by user input, an attacker can
+      inject arbitrary shell commands. Fix: pass arguments as separate
+      parameters to exec.Command without invoking a shell, or validate
+      the input strictly before use.
+
+    metadata:
+      cwe:
+        - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      confidence: HIGH
+      impact: HIGH
+      category: security
+      owasp:
+        - A03:2021 - Injection
+
+    languages:
+      - go
