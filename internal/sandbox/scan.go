@@ -1,4 +1,4 @@
-package main
+package sandbox
 
 import (
 	"context"
@@ -34,7 +34,7 @@ type ScanReport struct {
 	Findings      []Finding      `json:"findings"`
 }
 
-func runDockerScan(targetDir string) (*ScanReport, error) {
+func RunDockerScan(targetDir string) (*ScanReport, error) {
 	outputDir, err := os.MkdirTemp("", "sentrygrep-output-*")
 	if err != nil {
 		return nil, fmt.Errorf("creating output temp dir: %w", err)

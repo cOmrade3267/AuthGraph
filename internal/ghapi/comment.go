@@ -1,4 +1,4 @@
-package main
+package ghapi
 
 import (
 	"bytes"
@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/cOmrade3267/authgraph/internal/sandbox"
 )
 
 // commentBody mirrors the JSON body GitHub expects when creating an
@@ -19,7 +21,7 @@ type commentBody struct {
 
 // postPRComment posts a single comment to the given PR, authenticated
 // with an installation access token.
-func postPRComment(installToken, owner, repo string, prNumber int, body string) error {
+func PostPRComment(installToken, owner, repo string, prNumber int, body string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments", owner, repo, prNumber)
 
 	payload, err := json.Marshal(commentBody{Body: body})
@@ -55,7 +57,7 @@ func postPRComment(installToken, owner, repo string, prNumber int, body string) 
 // formatReportAsComment turns a ScanReport into a readable Markdown
 // comment body. Kept separate from postPRComment so formatting can
 // change independently of the HTTP mechanics.
-func formatReportAsComment(report *ScanReport) string {
+func FormatReportAsComment(report *sandbox.ScanReport) string {
 	var b strings.Builder
 
 	if report.TotalFindings == 0 {

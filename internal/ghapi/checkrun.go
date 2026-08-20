@@ -1,4 +1,4 @@
-package main
+package ghapi
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/cOmrade3267/authgraph/internal/sandbox"
 )
 
 type checkRunOutput struct {
@@ -24,7 +26,7 @@ type checkRunBody struct {
 
 // createCheckRun creates a new Check Run in "in_progress" state.
 // Returns the check run's ID so it can be updated later.
-func createCheckRun(installToken, owner, repo, headSHA string) (int64, error) {
+func CreateCheckRun(installToken, owner, repo, headSHA string) (int64, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/check-runs", owner, repo)
 
 	body := checkRunBody{
@@ -75,7 +77,7 @@ func createCheckRun(installToken, owner, repo, headSHA string) (int64, error) {
 
 // completeCheckRun updates an existing Check Run to "completed" with a
 // pass/fail conclusion derived from the scan report.
-func completeCheckRun(installToken, owner, repo string, checkRunID int64, report *ScanReport) error {
+func CompleteCheckRun(installToken, owner, repo string, checkRunID int64, report *sandbox.ScanReport) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/check-runs/%d", owner, repo, checkRunID)
 
 	conclusion := "success"
@@ -95,7 +97,7 @@ func completeCheckRun(installToken, owner, repo string, checkRunID int64, report
 		Conclusion: conclusion,
 		Output: checkRunOutput{
 			Title:   title,
-			Summary: formatReportAsComment(report),
+			Summary: FormatReportAsComment(report),
 		},
 	}
 
