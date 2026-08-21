@@ -17,7 +17,7 @@ import (
 // already has on file for your app — this proves the request genuinely
 // comes from you, without ever sending your private key over the network.
 
-const githubAppID = "4226913" // AuthGraph's App ID — update if you registered a new App
+const githubAppID = "4668574" // AuthGraph's App ID — update if you registered a new App
 
 // loadPrivateKey reads the .pem file and parses it into an RSA private key
 // object that the JWT library can use to sign tokens.

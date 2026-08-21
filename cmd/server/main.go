@@ -59,7 +59,7 @@ func shouldTriggerScan(action string) bool {
 // this still points at SentryGrep's key. Do not run this against real
 // webhook traffic until this path (and the App ID in internal/auth/auth.go)
 // are updated to AuthGraph's own values.
-const privateKeyPath = "secrets/sentrygrepdev.2026-07-05.private-key.pem"
+const privateKeyPath = "secrets/authgraph-dev.2026-08-20.private-key.pem"
 
 func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
