@@ -202,6 +202,10 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	if getWebhookSecret() == "" {
+		log.Fatal("GITHUB_WEBHOOK_SECRET is not set. The server refuses to start without a configured webhook secret.")
+	}
+
 	http.HandleFunc("/webhook", webhookHandler)
 	http.HandleFunc("/", healthCheckHandler)
 
