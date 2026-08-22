@@ -107,62 +107,74 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, `{"status": "accepted"}`)
+	go processEvent(event)
+}
+
+func processEvent(event PullRequestEvent) {
 	// --- Auth chain: App JWT -> installation token ---
 	appJWT, err := auth.GenerateAppJWT(privateKeyPath)
 	if err != nil {
 		log.Printf("Failed to generate app JWT: %v", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
 	installToken, err := auth.GetInstallationToken(appJWT, event.Installation.ID)
 	if err != nil {
 		log.Printf("Failed to get installation token: %v", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 	log.Printf("Got installation token (expires %s) for %s PR #%d",
 		installToken.ExpiresAt, event.Repository.FullName, event.Number)
 
+	owner, repo := fetch.SplitFullName(event.Repository.FullName)
+	if owner == "" || repo == "" {
+		log.Printf("Could not parse owner/repo from %s", event.Repository.FullName)
+		return
+	}
+
+	// --- Create Check Run immediately so the PR always gets a signal ---
+	checkRunID, err := ghapi.CreateCheckRun(installToken.Token, owner, repo, event.PullRequest.Head.SHA)
+	if err != nil {
+		log.Printf("Failed to create check run: %v", err)
+	}
+
 	// --- Fetch + extract PR code at head SHA ---
 	tmpDir, err := os.MkdirTemp("", "authgraph-scan-*")
 	if err != nil {
 		log.Printf("Failed to create temp dir: %v", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		if checkRunID != 0 {
+			ghapi.FailCheckRun(installToken.Token, owner, repo, checkRunID, "Failed to create temporary directory for scan.")
+		}
 		return
 	}
 	defer os.RemoveAll(tmpDir)
 
-	owner, repo := fetch.SplitFullName(event.Repository.FullName)
-	if owner == "" || repo == "" {
-		log.Printf("Could not parse owner/repo from %s", event.Repository.FullName)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
-		return
-	}
-
 	tarballBody, err := fetch.FetchTarball(installToken.Token, owner, repo, event.PullRequest.Head.SHA)
 	if err != nil {
 		log.Printf("Failed to fetch tarball: %v", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		if checkRunID != 0 {
+			ghapi.FailCheckRun(installToken.Token, owner, repo, checkRunID, "Failed to fetch PR tarball from GitHub.")
+		}
 		return
 	}
 	defer tarballBody.Close()
 
 	if err := fetch.ExtractTarball(tarballBody, tmpDir); err != nil {
 		log.Printf("Failed to extract tarball: %v", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		if checkRunID != 0 {
+			ghapi.FailCheckRun(installToken.Token, owner, repo, checkRunID, "Failed to extract PR tarball.")
+		}
 		return
-	}
-
-	checkRunID, err := ghapi.CreateCheckRun(installToken.Token, owner, repo, event.PullRequest.Head.SHA)
-	if err != nil {
-		log.Printf("Failed to create check run: %v", err)
 	}
 
 	report, err := sandbox.RunDockerScan(tmpDir)
 	if err != nil {
 		log.Printf("Scan failed for %s: %v", event.Repository.FullName, err)
-		http.Error(w, fmt.Sprintf("Scan failed: %v", err), http.StatusInternalServerError)
+		if checkRunID != 0 {
+			ghapi.FailCheckRun(installToken.Token, owner, repo, checkRunID, fmt.Sprintf("Docker scan failed: %v", err))
+		}
 		return
 	}
 
@@ -183,9 +195,6 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Printf("Posted scan results to %s PR #%d", event.Repository.FullName, event.Number)
 	}
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(report)
 }
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {

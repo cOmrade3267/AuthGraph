@@ -129,3 +129,47 @@ func CompleteCheckRun(installToken, owner, repo string, checkRunID int64, report
 
 	return nil
 }
+
+// FailCheckRun updates an existing Check Run to "completed" with conclusion
+// "failure" and a human-readable reason explaining what went wrong.
+func FailCheckRun(installToken, owner, repo string, checkRunID int64, reason string) error {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/check-runs/%d", owner, repo, checkRunID)
+
+	body := checkRunBody{
+		Name:       "SentryGrep Security Scan",
+		Status:     "completed",
+		Conclusion: "failure",
+		Output: checkRunOutput{
+			Title:   "Scan failed",
+			Summary: reason,
+		},
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("encoding check run failure update: %w", err)
+	}
+
+	req, err := http.NewRequest("PATCH", url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("building check run failure request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+installToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("updating check run to failure: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status %d updating check run to failure: %s", resp.StatusCode, respBody)
+	}
+
+	return nil
+}
