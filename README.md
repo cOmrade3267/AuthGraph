@@ -1,1 +1,1 @@
-read me
+exec.Command("sh", "-c", someVar)
