@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/cOmrade3267/authgraph/internal/auth"
 	"github.com/cOmrade3267/authgraph/internal/fetch"
@@ -61,6 +63,29 @@ func shouldTriggerScan(action string) bool {
 // are updated to AuthGraph's own values.
 const privateKeyPath = "secrets/authgraph-dev.2026-08-20.private-key.pem"
 
+// Webhook delivery deduplication. Tracks recently-seen X-GitHub-Delivery
+// IDs to prevent double-processing on redelivery (GitHub retry or manual
+// "Redeliver" in the UI). This is in-memory and single-instance — it does
+// not survive restarts or work across multiple replicas. Acceptable for
+// a single-instance academic deployment (see §7.4, §11).
+const dedupTTL = 5 * time.Minute
+
+var (
+	seenDeliveries   = make(map[string]time.Time)
+	seenDeliveriesMu sync.Mutex
+)
+
+// purgeOldDeliveries removes entries older than dedupTTL. Called inline
+// on each request; cheap at the expected delivery volume.
+func purgeOldDeliveries() {
+	now := time.Now()
+	for id, ts := range seenDeliveries {
+		if now.Sub(ts) > dedupTTL {
+			delete(seenDeliveries, id)
+		}
+	}
+}
+
 func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -79,6 +104,22 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	if !verifySignature(payloadBody, signatureHeader, secret) {
 		http.Error(w, "Invalid signature", http.StatusUnauthorized)
 		return
+	}
+
+	// --- Delivery dedup (§7.4) ---
+	deliveryID := r.Header.Get("X-GitHub-Delivery")
+	if deliveryID != "" {
+		seenDeliveriesMu.Lock()
+		purgeOldDeliveries()
+		if _, seen := seenDeliveries[deliveryID]; seen {
+			seenDeliveriesMu.Unlock()
+			log.Printf("Duplicate delivery %s — ignoring", deliveryID)
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintln(w, `{"status": "ignored", "reason": "duplicate delivery"}`)
+			return
+		}
+		seenDeliveries[deliveryID] = time.Now()
+		seenDeliveriesMu.Unlock()
 	}
 
 	eventType := r.Header.Get("X-GitHub-Event")
