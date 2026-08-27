@@ -4,3 +4,4 @@ secrets/
 bot-authgraph
 authgraph-bot
 *.log
+scanner/rules/
