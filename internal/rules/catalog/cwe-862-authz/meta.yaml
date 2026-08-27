@@ -1,0 +1,8 @@
+rule_id: authz-missing-ownership-check
+cwe: CWE-862
+title: "Resource mutated without preceding permission/ownership check"
+languages:
+  - go
+references:
+  - "https://github.com/go-gitea/gitea/security/advisories/GHSA-xv9x-fj9g-vj6h"
+  - "https://github.com/go-gitea/gitea/security/advisories/GHSA-v73x-hx65-6pf4"

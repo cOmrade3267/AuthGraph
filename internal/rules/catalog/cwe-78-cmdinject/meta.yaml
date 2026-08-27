@@ -1,0 +1,8 @@
+rule_id: go-cwe-78-shell-command-injection
+cwe: CWE-78
+title: OS Command Injection via Shell Invocation
+languages:
+  - go
+references:
+  - "https://github.com/civo/cli/releases/tag/v1.5.4"
+  - "https://github.com/civo/cli/pull/595"

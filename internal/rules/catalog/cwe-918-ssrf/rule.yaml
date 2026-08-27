@@ -1,0 +1,94 @@
+rules:
+  # ---------------------------------------------------------------
+  # Rule 1: User-controlled URL flows into http.Get / http.Post
+  # with no preceding validation call.
+  #
+  # Shape (Ech0 / general): a variable or struct field is passed
+  # directly to http.Get(), http.Post(), or http.Head() without
+  # any call to a URL-validation function in the same scope.
+  #
+  # Verified against:
+  #   - GHSA-8mc6-xjpr-h98x (lin-snow/Ech0): SendRequest used
+  #     plain http calls on a peer URL instead of SendSafeRequest
+  #     which internally calls ValidatePublicHTTPURL.
+  #   - Kyverno APICall SSRF: user-controlled ServiceCall.URL
+  #     flows into client.Do(req) with zero validation.
+  # ---------------------------------------------------------------
+  - id: ssrf-unvalidated-url-request
+    patterns:
+      - pattern-either:
+          # --- Direct http.Get/Post/Head with a variable URL ---
+          - pattern: http.Get($URL)
+          - pattern: http.Post($URL, ...)
+          - pattern: http.Head($URL)
+          # --- http.NewRequest building a request from a variable URL ---
+          - pattern: http.NewRequest($METHOD, $URL, ...)
+          - pattern: http.NewRequestWithContext($CTX, $METHOD, $URL, ...)
+      # Exclude hardcoded string literal URLs — not user-controlled
+      - pattern-not: http.Get("...")
+      - pattern-not: http.Post("...", ...)
+      - pattern-not: http.Head("...")
+      - pattern-not: http.NewRequest($METHOD, "...", ...)
+      - pattern-not: http.NewRequestWithContext($CTX, $METHOD, "...", ...)
+      # Exclude cases where a URL-validation function is called in the
+      # same function scope before the HTTP call. Uses metavariable-regex
+      # to match any function name containing common validation-naming
+      # patterns (validate/sanitize/check/isprivate/issafe/ensure combined
+      # with url/request/addr/host/ip — case-insensitive, either order).
+      - pattern-not-inside:
+          patterns:
+            - pattern: |
+                $VALIDATE_FN(...)
+                ...
+            - metavariable-regex:
+                metavariable: $VALIDATE_FN
+                regex: (?i)(.*(validate|sanitize|check|isprivate|issafe|ensure).*(url|request|addr|host|ip).*|.*(url|request|addr|host|ip).*(validate|sanitize|check|safe|ensure).*)
+      # Exclude URLs built via fmt.Sprintf with a fixed scheme+host prefix.
+      # Shape: url := fmt.Sprintf("https://known-host/path/%s", segment)
+      # The host is a string literal — only path segments are interpolated.
+      # This is not attacker-controllable at the host level, so not SSRF.
+      - pattern-not-inside:
+          patterns:
+            - pattern: |
+                $URL = fmt.Sprintf($FMT, ...)
+                ...
+            - metavariable-regex:
+                metavariable: $FMT
+                regex: ^"https?://
+      - pattern-not-inside:
+          patterns:
+            - pattern: |
+                $URL := fmt.Sprintf($FMT, ...)
+                ...
+            - metavariable-regex:
+                metavariable: $FMT
+                regex: ^"https?://
+
+    severity: WARNING
+
+    message: >-
+      Server-Side Request Forgery risk (CWE-918): a variable is used as
+      the URL in an outbound HTTP request (http.Get, http.Post, http.Head,
+      or http.NewRequest) with no visible URL validation call in the same
+      function scope. If this URL originates from user-controlled input
+      (request parameters, config fields, database values), an attacker
+      can force the server to make requests to internal services or
+      arbitrary hosts. Fix: validate the URL against an allowlist of safe
+      hosts/schemes, or use a validation function like
+      ValidatePublicHTTPURL to reject private/internal addresses before
+      making the request.
+
+    metadata:
+      cwe:
+        - "CWE-918: Server-Side Request Forgery (SSRF)"
+      confidence: MEDIUM
+      impact: HIGH
+      category: security
+      owasp:
+        - A10:2021 - Server-Side Request Forgery (SSRF)
+      references:
+        - "https://github.com/lin-snow/Ech0/security/advisories/GHSA-8mc6-xjpr-h98x"
+        - "https://github.com/lin-snow/Ech0/commit/091d26d2d942df6df9f520328d2f9cf2592bbefc"
+
+    languages:
+      - go
