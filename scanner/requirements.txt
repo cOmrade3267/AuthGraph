@@ -1,0 +1,2 @@
+semgrep==1.167.0
+PyYAML
