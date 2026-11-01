@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cOmrade3267/authgraph/internal/sandbox"
+	"github.com/cOmrade3267/authgraph/internal/report"
 )
 
 type checkRunOutput struct {
@@ -77,7 +77,7 @@ func CreateCheckRun(installToken, owner, repo, headSHA string) (int64, error) {
 
 // completeCheckRun updates an existing Check Run to "completed" with a
 // pass/fail conclusion derived from the scan report.
-func CompleteCheckRun(installToken, owner, repo string, checkRunID int64, report *sandbox.ScanReport) error {
+func CompleteCheckRun(installToken, owner, repo string, checkRunID int64, report *report.ScanReport) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/check-runs/%d", owner, repo, checkRunID)
 
 	conclusion := "success"

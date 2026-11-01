@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cOmrade3267/authgraph/internal/sandbox"
+	"github.com/cOmrade3267/authgraph/internal/report"
 )
 
 // commentBody mirrors the JSON body GitHub expects when creating an
@@ -57,7 +57,7 @@ func PostPRComment(installToken, owner, repo string, prNumber int, body string) 
 // formatReportAsComment turns a ScanReport into a readable Markdown
 // comment body. Kept separate from postPRComment so formatting can
 // change independently of the HTTP mechanics.
-func FormatReportAsComment(report *sandbox.ScanReport) string {
+func FormatReportAsComment(report *report.ScanReport) string {
 	var b strings.Builder
 
 	if report.TotalFindings == 0 {
@@ -87,7 +87,7 @@ func FormatReportAsComment(report *sandbox.ScanReport) string {
 
 	for _, f := range shown {
 		b.WriteString(fmt.Sprintf("**[%s]** `%s:%d` — %s (%s)\n\n",
-			f.Severity, f.File, f.Line, f.Message, f.CWE))
+			f.Severity, f.Location.File, f.Location.Line, f.Evidence.Static.Message, f.CWE))
 	}
 
 	if len(report.Findings) > maxInline {
