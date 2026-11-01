@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cOmrade3267/authgraph/internal/policy"
 	"github.com/cOmrade3267/authgraph/internal/sandbox"
 )
 
@@ -44,7 +45,17 @@ func main() {
 		}
 	}
 
-	if len(report.Findings) > 0 {
+	result, err := policy.Evaluate(*report)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: evaluating policy: %v\n", err)
+		os.Exit(2)
+	}
+	for _, d := range result.Findings {
+		fmt.Printf("id=%s decision=%s\n", d.FindingID, d.Decision)
+	}
+	fmt.Printf("overall decision=%s\n", result.Overall)
+
+	if result.Overall == policy.Block {
 		os.Exit(1)
 	}
 	os.Exit(0)
