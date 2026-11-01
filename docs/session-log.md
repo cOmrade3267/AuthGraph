@@ -163,3 +163,20 @@ Decided
 Next
 - Human deploys; open a PR on authgraph-demo with the fixtures and read journalctl for the Policy (shadow) lines.
 - Then switch CompleteCheckRun to the policy conclusion, together with a decision on letting CWE-78 emit `likely`.
+
+2026-11-01 (later still): shadow-mode build deployed and tested live
+Done
+- Built linux/amd64 binary from feat/layer2-live (sha256 39ce400d...de04), scp'd to the EC2 box, kept the previous binary as /home/ubuntu/authgraph/authgraph-bot.bak (old sha256 bd081b45...07d1), stopped/swapped/started authgraph.service. Done by the agent at the user's explicit request (an exception to the AGENTS.md no-ssh rule).
+- Pushed branch test/layer2-shadow (at 7cdab5e, the vulnerable fixtures) to cOmrade3267/authgraph-demo and opened PR #2 via gh.
+Verified (commands run, output seen)
+- Server sha256 of the uploaded file matched the local build; systemctl is-active = active; journal: "AuthGraph bot listening on port 16666"; GET https://authgraph.duckdns.org/ returned {"status": "AuthGraph bot is running"}.
+- PR #2 journal lines: "Scan complete: 3 findings (ERROR:1 WARNING:2)", three "Policy (shadow): id=... decision=warn", "Policy (shadow): overall=warn would_conclude=neutral", then check run completed and comment posted. `gh pr checks 2` showed the Check Run as "fail" (the unchanged old ERROR->failure logic), confirming shadow mode did not change live behavior.
+Not verified
+- Memory behavior of the 32 MB binary (OPA) on the 908 MB box beyond one scan (free -m after restart: 364 used, 543 available).
+- Rollback was not exercised.
+Decided
+- Live conclusion is NOT switched to policy yet: shadow shows overall=warn would_conclude=neutral for a PR the live check marks failed.
+Next
+- Decide whether CWE-78 may emit `likely` (so it still blocks), then switch CompleteCheckRun to the policy conclusion.
+- Close PR #2 / delete test/layer2-shadow on the demo repo when no longer needed.
+Rollback: ssh to the box, `cd /home/ubuntu/authgraph && sudo systemctl stop authgraph && cp -p authgraph-bot.bak authgraph-bot && sudo systemctl start authgraph`.
