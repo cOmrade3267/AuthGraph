@@ -94,6 +94,22 @@ func enrichFindings(targetDir string, reportData *report.ScanReport) {
 
 		hash := sha256.Sum256([]byte(hashInput))
 		f.FindingID = hex.EncodeToString(hash[:])[:16]
+
+		assignConfidence(f)
+	}
+}
+
+// assignConfidence upgrades a static-only finding from "unconfirmed" to
+// "likely" for the one rule family precise enough to earn it: CWE-78 matched
+// by a rule Semgrep itself rates HIGH confidence. Everything else stays
+// "unconfirmed" until Layer 4 can confirm it. Never downgrades a finding that
+// already has a non-default confidence.
+func assignConfidence(f *report.Finding) {
+	if f.Confidence != "unconfirmed" {
+		return
+	}
+	if f.CWE == "CWE-78" && strings.EqualFold(f.SemgrepConfidence, "HIGH") {
+		f.Confidence = "likely"
 	}
 }
 

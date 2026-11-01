@@ -180,3 +180,22 @@ Next
 - Decide whether CWE-78 may emit `likely` (so it still blocks), then switch CompleteCheckRun to the policy conclusion.
 - Close PR #2 / delete test/layer2-shadow on the demo repo when no longer needed.
 Rollback: ssh to the box, `cd /home/ubuntu/authgraph && sudo systemctl stop authgraph && cp -p authgraph-bot.bak authgraph-bot && sudo systemctl start authgraph`.
+
+2026-11-01 (evening): CWE-78 emits `likely`; Check Run switched to policy (branch feat/layer2-enforce, stacked on feat/layer2-live / PR #17)
+Done
+- internal/sandbox/scan.go: assignConfidence upgrades a finding from "unconfirmed" to "likely" only when CWE == CWE-78 and semgrep_confidence is HIGH; never changes a non-"unconfirmed" confidence. No change to scanner.py or any rule.
+- internal/ghapi/checkrun.go: new checkRunConclusion derives conclusion/title from policy.Evaluate (block->failure, warn->neutral, note->success; evaluation error -> failure "Policy evaluation failed"). CompleteCheckRun uses it. Old ERROR->failure logic removed.
+- cmd/server/main.go: log lines renamed from "Policy (shadow)" to "Policy:" with "conclusion=".
+- Tests: internal/ghapi/checkrun_test.go (7 cases), internal/sandbox/confidence_test.go (7 cases).
+Verified (commands run, output seen)
+- go build ./..., go vet on changed packages, go test ./...: all pass (ghapi, policy, rules, sandbox ok).
+- bash scanner/build.sh && go run ./cmd/scan testdata: 3 baseline ids unchanged (511e932569afaf29, f3edc922dd9db12d, 9fa48477df57d893); decisions block/warn/warn; overall block; exit 1.
+Not verified
+- NOT deployed. The live server still runs the shadow-mode build (Check Run on the old logic) until a deploy.
+- Real Check Run conclusion via GitHub with this change.
+- CWE-862/CWE-918 remain unconfirmed -> warn -> neutral, so only CWE-78 can fail a Check Run until Layer 4.
+Decided
+- `likely` is granted by rule family (CWE-78 + Semgrep HIGH) in Go, not in scanner.py, so no image rebuild is needed on the server.
+- Policy error fails the check closed.
+Next
+- Deploy (backup authgraph-bot.bak is the shadow build now; re-backup first), re-run demo PR, expect Check Run failure from CWE-78 block and fix commit success.
