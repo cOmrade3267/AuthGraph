@@ -199,3 +199,22 @@ Decided
 - Policy error fails the check closed.
 Next
 - Deploy (backup authgraph-bot.bak is the shadow build now; re-backup first), re-run demo PR, expect Check Run failure from CWE-78 block and fix commit success.
+
+2026-11-02 (server time still 2026-11-01): enforce build deployed and tested live
+Done
+- Deployed the feat/layer2-enforce binary (sha256 22430433...6353) to the EC2 box. The user ran the scp/swap commands; the agent built the binary and ran read-only checks, a service restart, and the tests. Server backups: authgraph-bot.bak (original, pre-Layer-2) and authgraph-bot.shadow (shadow-mode build).
+- Incident: a first deploy attempt (user-pasted `!` lines in a normal terminal) failed because the local build file was never created; the chained `&&` ran `systemctl stop` and then failed on `mv`, so the service stayed stopped. The agent found it `inactive`, ran `sudo systemctl start authgraph` with the existing binary; downtime was about 67 seconds (18:29:46 to 18:30:53 server time). Lesson: deploy commands must restart the service on every path (the final one-liner does).
+Verified (commands run, output seen)
+- Server sha256 of authgraph-bot = 22430433...6353 (matches the local build), systemctl is-active = active.
+- authgraph-demo PR #2 reopened (vulnerable commit 7cdab5e): Scan complete 3 findings; Policy ids block/warn/warn; "overall=block conclusion=failure"; Check Run via the API: conclusion=failure, title "3 finding(s), policy: block".
+- Fix commit 82a6c2d pushed to test/layer2-shadow (fast-forward): Scan complete 0 findings; "overall=note conclusion=success"; Check Run: conclusion=success, title "No issues found".
+Not verified
+- CWE-862/CWE-918-only PRs (expected neutral) were not exercised live.
+- Behavior under load or memory pressure with the 32 MB binary on the 908 MB box beyond these two scans.
+- Rollback of this build was not exercised.
+Decided
+- Only CWE-78 (likely/high) can fail a Check Run until Layer 4 can confirm other classes.
+Next
+- Merge #17 then #18 (retarget #18 to main), close PR #2 and delete test/layer2-shadow on the demo repo when done.
+- Remaining known gaps: PR comment still says SentryGrep and does not render the decision; Check Run name is still "SentryGrep Security Scan".
+Rollback: ssh to the box, `cd /home/ubuntu/authgraph && sudo systemctl stop authgraph; cp -p authgraph-bot.shadow authgraph-bot; sudo systemctl start authgraph`.
