@@ -218,3 +218,16 @@ Next
 - Merge #17 then #18 (retarget #18 to main), close PR #2 and delete test/layer2-shadow on the demo repo when done.
 - Remaining known gaps: PR comment still says SentryGrep and does not render the decision; Check Run name is still "SentryGrep Security Scan".
 Rollback: ssh to the box, `cd /home/ubuntu/authgraph && sudo systemctl stop authgraph; cp -p authgraph-bot.shadow authgraph-bot; sudo systemctl start authgraph`.
+
+2026-11-01 (late): plan doc updated; warn-only live test
+Done
+- docs/layer2-plan.md updated to the shipped behavior (live wiring, CWE-78 `likely`, fail-closed Check Run, rollout history, known limits, out-of-scope).
+- Created branch test/layer2-warn-only on authgraph-demo (main + peer.go + tickets.go from 7cdab5e, no run.go) and opened PR #3 via gh, using a temporary git worktree.
+Verified (commands run, output seen)
+- PR #3 live: "Scan complete: 2 findings (WARNING:2)"; Policy ids warn/warn; "overall=warn conclusion=neutral"; Check Run via the API: conclusion=neutral, title "2 finding(s), policy: warn". This closes the earlier "CWE-862/918-only PR not exercised live" gap.
+Not verified
+- Behavior under load / memory on the 908 MB box beyond these scans; rollback of the enforce build.
+Decided
+- Layer 4 (AuthzReplayVerifier) is the next layer to unlock blocking for CWE-862; Layer 3 does not change the policy outcome (risk_context has no effect yet).
+Next
+- Merge #17, then retarget/merge #18; close PRs #2 and #3 and delete test branches on the demo repo when done.
