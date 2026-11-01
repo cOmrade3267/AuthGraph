@@ -223,15 +223,15 @@ func processEvent(event PullRequestEvent) {
 	log.Printf("Scan complete: %d findings (by severity: %v)",
 		report.TotalFindings, report.BySeverity)
 
-	// Layer 2 SHADOW MODE: evaluate and log only. The Check Run conclusion below
-	// is still decided by ghapi.CompleteCheckRun exactly as before.
+	// Layer 2: log the policy decisions. The Check Run conclusion below is
+	// derived from the same policy inside ghapi.CompleteCheckRun.
 	if result, err := policy.Evaluate(*report); err != nil {
-		log.Printf("Policy (shadow) error: %v", err)
+		log.Printf("Policy error: %v", err)
 	} else {
 		for _, d := range result.Findings {
-			log.Printf("Policy (shadow): id=%s decision=%s", d.FindingID, d.Decision)
+			log.Printf("Policy: id=%s decision=%s", d.FindingID, d.Decision)
 		}
-		log.Printf("Policy (shadow): overall=%s would_conclude=%s", result.Overall, policy.ConclusionFor(result.Overall))
+		log.Printf("Policy: overall=%s conclusion=%s", result.Overall, policy.ConclusionFor(result.Overall))
 	}
 
 	if checkRunID != 0 {

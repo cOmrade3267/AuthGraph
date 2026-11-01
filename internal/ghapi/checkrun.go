@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
+	"github.com/cOmrade3267/authgraph/internal/policy"
 	"github.com/cOmrade3267/authgraph/internal/report"
 )
 
@@ -75,21 +77,28 @@ func CreateCheckRun(installToken, owner, repo, headSHA string) (int64, error) {
 	return created.ID, nil
 }
 
+// checkRunConclusion derives the Check Run conclusion and title from the Layer 2
+// policy decision (block->failure, warn->neutral, note->success). If the policy
+// cannot be evaluated the check fails, never passes.
+func checkRunConclusion(r *report.ScanReport) (conclusion, title string) {
+	result, err := policy.Evaluate(*r)
+	if err != nil {
+		log.Printf("Policy evaluation failed: %v", err)
+		return "failure", "Policy evaluation failed"
+	}
+	conclusion = policy.ConclusionFor(result.Overall)
+	if r.TotalFindings == 0 {
+		return conclusion, "No issues found"
+	}
+	return conclusion, fmt.Sprintf("%d finding(s), policy: %s", r.TotalFindings, result.Overall)
+}
+
 // completeCheckRun updates an existing Check Run to "completed" with a
 // pass/fail conclusion derived from the scan report.
 func CompleteCheckRun(installToken, owner, repo string, checkRunID int64, report *report.ScanReport) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/check-runs/%d", owner, repo, checkRunID)
 
-	conclusion := "success"
-	title := "No issues found"
-	if report.TotalFindings > 0 {
-		if report.BySeverity["ERROR"] > 0 {
-			conclusion = "failure"
-		} else {
-			conclusion = "neutral"
-		}
-		title = fmt.Sprintf("%d finding(s)", report.TotalFindings)
-	}
+	conclusion, title := checkRunConclusion(report)
 
 	body := checkRunBody{
 		Name:       "SentryGrep Security Scan",

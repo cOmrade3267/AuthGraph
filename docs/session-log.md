@@ -180,3 +180,59 @@ Next
 - Decide whether CWE-78 may emit `likely` (so it still blocks), then switch CompleteCheckRun to the policy conclusion.
 - Close PR #2 / delete test/layer2-shadow on the demo repo when no longer needed.
 Rollback: ssh to the box, `cd /home/ubuntu/authgraph && sudo systemctl stop authgraph && cp -p authgraph-bot.bak authgraph-bot && sudo systemctl start authgraph`.
+
+2026-11-01 (evening): CWE-78 emits `likely`; Check Run switched to policy (branch feat/layer2-enforce, stacked on feat/layer2-live / PR #17)
+Done
+- internal/sandbox/scan.go: assignConfidence upgrades a finding from "unconfirmed" to "likely" only when CWE == CWE-78 and semgrep_confidence is HIGH; never changes a non-"unconfirmed" confidence. No change to scanner.py or any rule.
+- internal/ghapi/checkrun.go: new checkRunConclusion derives conclusion/title from policy.Evaluate (block->failure, warn->neutral, note->success; evaluation error -> failure "Policy evaluation failed"). CompleteCheckRun uses it. Old ERROR->failure logic removed.
+- cmd/server/main.go: log lines renamed from "Policy (shadow)" to "Policy:" with "conclusion=".
+- Tests: internal/ghapi/checkrun_test.go (7 cases), internal/sandbox/confidence_test.go (7 cases).
+Verified (commands run, output seen)
+- go build ./..., go vet on changed packages, go test ./...: all pass (ghapi, policy, rules, sandbox ok).
+- bash scanner/build.sh && go run ./cmd/scan testdata: 3 baseline ids unchanged (511e932569afaf29, f3edc922dd9db12d, 9fa48477df57d893); decisions block/warn/warn; overall block; exit 1.
+Not verified
+- NOT deployed. The live server still runs the shadow-mode build (Check Run on the old logic) until a deploy.
+- Real Check Run conclusion via GitHub with this change.
+- CWE-862/CWE-918 remain unconfirmed -> warn -> neutral, so only CWE-78 can fail a Check Run until Layer 4.
+Decided
+- `likely` is granted by rule family (CWE-78 + Semgrep HIGH) in Go, not in scanner.py, so no image rebuild is needed on the server.
+- Policy error fails the check closed.
+Next
+- Deploy (backup authgraph-bot.bak is the shadow build now; re-backup first), re-run demo PR, expect Check Run failure from CWE-78 block and fix commit success.
+
+2026-11-02 (server time still 2026-11-01): enforce build deployed and tested live
+Done
+- Deployed the feat/layer2-enforce binary (sha256 22430433...6353) to the EC2 box. The user ran the scp/swap commands; the agent built the binary and ran read-only checks, a service restart, and the tests. Server backups: authgraph-bot.bak (original, pre-Layer-2) and authgraph-bot.shadow (shadow-mode build).
+- Incident: a first deploy attempt (user-pasted `!` lines in a normal terminal) failed because the local build file was never created; the chained `&&` ran `systemctl stop` and then failed on `mv`, so the service stayed stopped. The agent found it `inactive`, ran `sudo systemctl start authgraph` with the existing binary; downtime was about 67 seconds (18:29:46 to 18:30:53 server time). Lesson: deploy commands must restart the service on every path (the final one-liner does).
+Verified (commands run, output seen)
+- Server sha256 of authgraph-bot = 22430433...6353 (matches the local build), systemctl is-active = active.
+- authgraph-demo PR #2 reopened (vulnerable commit 7cdab5e): Scan complete 3 findings; Policy ids block/warn/warn; "overall=block conclusion=failure"; Check Run via the API: conclusion=failure, title "3 finding(s), policy: block".
+- Fix commit 82a6c2d pushed to test/layer2-shadow (fast-forward): Scan complete 0 findings; "overall=note conclusion=success"; Check Run: conclusion=success, title "No issues found".
+Not verified
+- CWE-862/CWE-918-only PRs (expected neutral) were not exercised live.
+- Behavior under load or memory pressure with the 32 MB binary on the 908 MB box beyond these two scans.
+- Rollback of this build was not exercised.
+Decided
+- Only CWE-78 (likely/high) can fail a Check Run until Layer 4 can confirm other classes.
+Next
+- Merge #17 then #18 (retarget #18 to main), close PR #2 and delete test/layer2-shadow on the demo repo when done.
+- Remaining known gaps: PR comment still says SentryGrep and does not render the decision; Check Run name is still "SentryGrep Security Scan".
+Rollback: ssh to the box, `cd /home/ubuntu/authgraph && sudo systemctl stop authgraph; cp -p authgraph-bot.shadow authgraph-bot; sudo systemctl start authgraph`.
+
+2026-11-01 (late): plan doc updated; warn-only live test
+Done
+- docs/layer2-plan.md updated to the shipped behavior (live wiring, CWE-78 `likely`, fail-closed Check Run, rollout history, known limits, out-of-scope).
+- Created branch test/layer2-warn-only on authgraph-demo (main + peer.go + tickets.go from 7cdab5e, no run.go) and opened PR #3 via gh, using a temporary git worktree.
+Verified (commands run, output seen)
+- PR #3 live: "Scan complete: 2 findings (WARNING:2)"; Policy ids warn/warn; "overall=warn conclusion=neutral"; Check Run via the API: conclusion=neutral, title "2 finding(s), policy: warn". This closes the earlier "CWE-862/918-only PR not exercised live" gap.
+Not verified
+- Behavior under load / memory on the 908 MB box beyond these scans; rollback of the enforce build.
+Decided
+- Layer 4 (AuthzReplayVerifier) is the next layer to unlock blocking for CWE-862; Layer 3 does not change the policy outcome (risk_context has no effect yet).
+Next
+- Merge #17, then retarget/merge #18; close PRs #2 and #3 and delete test branches on the demo repo when done.
+
+2026-11-01 (late): block-demo PR for the presentation
+Done: created test/layer2-block-demo on authgraph-demo (main + run.go only) and opened PR #4. PRs #2, #3, #4 are kept open on purpose as demo artifacts (not part of the project code; not to be merged).
+Verified: PR #4 live: 1 finding (ERROR), Policy decision=block, overall=block conclusion=failure; Check Run via the API: conclusion=failure, title "1 finding(s), policy: block".
+Demo set: #2 success (fix commit), #3 neutral (CWE-862+918 warn-only), #4 failure (CWE-78 block).
