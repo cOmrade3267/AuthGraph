@@ -253,3 +253,22 @@ Decided
 - Known gap left alone: Check Run and comment still show identical content (the Layer 5 duplication decision remains open).
 Next
 - Review the PR, then deploy and view on a new demo PR. Layer 3: a terraform repo (cOmrade3267/terraform-aws-dev-lab) was offered as the IaC source; plan before code.
+
+2026-11-02 (later): Layer 5 rendering deployed and tested live
+Done
+- Deployed the feat/layer5-render binary (sha256 4c660bb1...d282) to the EC2 box at the user's explicit request; previous binary kept as authgraph-bot.enforce (also on the box: authgraph-bot.shadow, authgraph-bot.bak). The swap always restarts the service.
+- Opened authgraph-demo PR #5 (branch test/layer5-demo: main + peer.go, tickets.go, run.go).
+Verified (commands run, output seen)
+- Server sha256 matches the build (4c660bb1d4e7b946), systemctl is-active = active.
+- PR #5 live: 3 findings, Policy block/warn/warn, overall=block conclusion=failure. Check Run via the API: "AuthGraph Security Scan" conclusion=failure, title "3 finding(s), policy: block". Posted comment read back via the API: headline "policy: block", per-finding decision, CWE, severity, confidence, relative path and function, snippet in a code fence, references, decision-key footer; no "SentryGrep".
+Not verified
+- How the comment looks when rendered on github.com (read as raw Markdown only).
+- Rollback of this build was not exercised.
+Decided
+- Demo PR set: #2 success, #3 neutral, #4 failure (all still labeled SentryGrep from before the rename), #5 failure with the new rendering. All kept open, not to be merged.
+Known polish left alone
+- Scanner rule messages are long (they include the fix advice); the comment shows them in full.
+- The Check Run summary and the comment still show identical content.
+Next
+- Layer 3 plan (read the terraform repo, read-only, before any code); Layer 4 plan decisions.
+Rollback: ssh to the box, `cd /home/ubuntu/authgraph && sudo systemctl stop authgraph; cp -p authgraph-bot.enforce authgraph-bot; sudo systemctl start authgraph`.
