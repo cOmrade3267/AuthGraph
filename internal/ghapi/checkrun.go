@@ -32,12 +32,12 @@ func CreateCheckRun(installToken, owner, repo, headSHA string) (int64, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/check-runs", owner, repo)
 
 	body := checkRunBody{
-		Name:    "SentryGrep Security Scan",
+		Name:    "AuthGraph Security Scan",
 		HeadSHA: headSHA,
 		Status:  "in_progress",
 		Output: checkRunOutput{
 			Title:   "Scanning for vulnerabilities...",
-			Summary: "SentryGrep is running Semgrep against this PR's code.",
+			Summary: "AuthGraph is running Semgrep against this PR's code.",
 		},
 	}
 
@@ -101,7 +101,7 @@ func CompleteCheckRun(installToken, owner, repo string, checkRunID int64, report
 	conclusion, title := checkRunConclusion(report)
 
 	body := checkRunBody{
-		Name:       "SentryGrep Security Scan",
+		Name:       "AuthGraph Security Scan",
 		Status:     "completed",
 		Conclusion: conclusion,
 		Output: checkRunOutput{
@@ -145,7 +145,7 @@ func FailCheckRun(installToken, owner, repo string, checkRunID int64, reason str
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/check-runs/%d", owner, repo, checkRunID)
 
 	body := checkRunBody{
-		Name:       "SentryGrep Security Scan",
+		Name:       "AuthGraph Security Scan",
 		Status:     "completed",
 		Conclusion: "failure",
 		Output: checkRunOutput{

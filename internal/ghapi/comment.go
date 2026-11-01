@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cOmrade3267/authgraph/internal/policy"
 	"github.com/cOmrade3267/authgraph/internal/report"
 )
 
@@ -54,46 +55,174 @@ func PostPRComment(installToken, owner, repo string, prNumber int, body string) 
 	return nil
 }
 
-// formatReportAsComment turns a ScanReport into a readable Markdown
-// comment body. Kept separate from postPRComment so formatting can
-// change independently of the HTTP mechanics.
-func FormatReportAsComment(report *report.ScanReport) string {
+// FormatReportAsComment renders a ScanReport as the Markdown shown in the PR
+// comment and in the Check Run summary. One renderer for both.
+//
+// Everything that originates in the scanned PR (file paths, snippets) or the
+// scanner (messages) is untrusted data: it is rendered inside code spans/fences
+// or sanitized, never interpolated as raw Markdown.
+func FormatReportAsComment(r *report.ScanReport) string {
 	var b strings.Builder
 
-	if report.TotalFindings == 0 {
-		b.WriteString("### ✅ SentryGrep Scan — No issues found\n\n")
-		b.WriteString("No security findings at or above the configured threshold.\n")
+	result, perr := policy.Evaluate(*r)
+
+	if r.TotalFindings == 0 {
+		b.WriteString("### ✅ AuthGraph — No issues found\n\n")
+		b.WriteString("No security findings.\n")
 		return b.String()
 	}
 
-	b.WriteString(fmt.Sprintf("### ⚠️ SentryGrep Scan — %d finding(s)\n\n", report.TotalFindings))
+	switch {
+	case perr != nil:
+		b.WriteString(fmt.Sprintf("### ❌ AuthGraph — policy evaluation failed · %d finding(s)\n\n", r.TotalFindings))
+		b.WriteString("The policy could not be evaluated, so this check fails closed.\n\n")
+	default:
+		b.WriteString(fmt.Sprintf("### %s AuthGraph — policy: **%s** · %d finding(s)\n\n",
+			decisionIcon(result.Overall), result.Overall, r.TotalFindings))
+	}
 
-	b.WriteString("| Severity | Count |\n|---|---|\n")
-	for _, sev := range []string{"ERROR", "WARNING", "INFO"} {
-		if count, ok := report.BySeverity[sev]; ok && count > 0 {
-			b.WriteString(fmt.Sprintf("| %s | %d |\n", sev, count))
+	// Decisions are returned in input order with suppressed findings omitted,
+	// so walk the findings the same way to pair each with its decision.
+	decisions := map[int]string{}
+	if perr == nil {
+		k := 0
+		for i, f := range r.Findings {
+			if f.Suppressed {
+				continue
+			}
+			if k < len(result.Findings) {
+				decisions[i] = result.Findings[k].Decision
+				k++
+			}
 		}
 	}
-	b.WriteString("\n")
 
-	// Cap how many individual findings we list inline — a huge PR with
-	// hundreds of findings would produce a comment GitHub might truncate
-	// or that's just unreadable. Point to the full report for the rest.
 	const maxInline = 10
-	shown := report.Findings
-	if len(shown) > maxInline {
-		shown = shown[:maxInline]
+	listed, suppressed := 0, 0
+	for i, f := range r.Findings {
+		if f.Suppressed {
+			suppressed++
+			continue
+		}
+		if listed >= maxInline {
+			continue
+		}
+		listed++
+		b.WriteString(renderFinding(f, decisions[i]))
 	}
 
-	for _, f := range shown {
-		b.WriteString(fmt.Sprintf("**[%s]** `%s:%d` — %s (%s)\n\n",
-			f.Severity, f.Location.File, f.Location.Line, f.Evidence.Static.Message, f.CWE))
+	if hidden := len(r.Findings) - suppressed - listed; hidden > 0 {
+		b.WriteString(fmt.Sprintf("_...and %d more finding(s) not shown._\n\n", hidden))
+	}
+	if suppressed > 0 {
+		b.WriteString(fmt.Sprintf("_%d suppressed finding(s) not shown._\n\n", suppressed))
 	}
 
-	if len(report.Findings) > maxInline {
-		b.WriteString(fmt.Sprintf("_...and %d more finding(s) not shown._\n",
-			len(report.Findings)-maxInline))
-	}
-
+	b.WriteString("<sub>Decision key: **block** fails the check, **warn** is neutral, **note** passes. " +
+		"Static findings are `unconfirmed` until dynamic verification exists; high-confidence CWE-78 matches are `likely`.</sub>\n")
 	return b.String()
+}
+
+func renderFinding(f report.Finding, decision string) string {
+	var b strings.Builder
+
+	loc := fmt.Sprintf("%s:%d", relPath(f.Location.File), f.Location.Line)
+	where := inlineCode(loc)
+	if f.Location.Function != nil && *f.Location.Function != "" {
+		where += " in " + inlineCode(*f.Location.Function+"()")
+	}
+	label := decision
+	if label == "" {
+		label = "n/a"
+	}
+	b.WriteString(fmt.Sprintf("#### %s %s · %s · %s · confidence: %s\n",
+		decisionIcon(decision), label, inlineCode(f.CWE), oneLine(f.Severity), oneLine(f.Confidence)))
+	b.WriteString(where + "\n\n")
+
+	if msg := oneLine(f.Evidence.Static.Message); msg != "" {
+		b.WriteString("> " + msg + "\n\n")
+	}
+	if snip := trimSnippet(f.Evidence.Static.Snippet); snip != "" {
+		b.WriteString(fenced("go", snip) + "\n")
+	}
+	if len(f.References) > 0 {
+		b.WriteString("References:\n")
+		for _, ref := range f.References {
+			b.WriteString("- " + oneLine(ref) + "\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func decisionIcon(d string) string {
+	switch d {
+	case policy.Block:
+		return "🔴"
+	case policy.Warn:
+		return "🟡"
+	case policy.Note:
+		return "⚪"
+	}
+	return "❔"
+}
+
+// relPath drops the sandbox mount prefix so users see repo-relative paths.
+func relPath(p string) string { return strings.TrimPrefix(p, "/target/") }
+
+// oneLine makes untrusted text safe for a single Markdown line: collapses
+// whitespace, neutralizes HTML and @mentions.
+func oneLine(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "@", "@\u200b")
+	return s
+}
+
+// inlineCode wraps untrusted text in a code span that it cannot close early.
+func inlineCode(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	s = strings.ReplaceAll(s, "`", "'")
+	return "`" + s + "`"
+}
+
+// trimSnippet caps snippet size so one finding cannot flood the comment.
+func trimSnippet(s string) string {
+	s = strings.TrimRight(s, "\n\r\t ")
+	if s == "" {
+		return ""
+	}
+	const maxLines, maxChars = 15, 1500
+	lines := strings.Split(s, "\n")
+	truncated := false
+	if len(lines) > maxLines {
+		lines, truncated = lines[:maxLines], true
+	}
+	s = strings.Join(lines, "\n")
+	if len(s) > maxChars {
+		s, truncated = s[:maxChars], true
+	}
+	if truncated {
+		s += "\n// ... truncated"
+	}
+	return s
+}
+
+// fenced puts untrusted text in a code fence longer than any backtick run
+// inside it, so the content cannot break out of the block.
+func fenced(lang, content string) string {
+	longest, run := 0, 0
+	for _, r := range content {
+		if r == '`' {
+			run++
+			if run > longest {
+				longest = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	fence := strings.Repeat("`", max(3, longest+1))
+	return fence + lang + "\n" + content + "\n" + fence + "\n"
 }
