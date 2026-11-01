@@ -129,3 +129,54 @@ usememos/memos), deferred earlier in Week 2, now due.
 - **scanner/build.sh**: Updated to copy `rule.yaml` and `meta.yaml` into target rule directories, validate both files exist (exiting 1 on missing file), and exit 1 if no rules are found before docker build.
 - **Go Types & AST Parsing**: Created `internal/report/schema.go` to exactly mirror the new JSON shape. Replaced flat `sandbox.ScanReport` references across `internal/sandbox/scan.go`, `internal/ghapi/comment.go`, and `internal/ghapi/checkrun.go` with `report.ScanReport`. Added a lightweight Go `ast.Inspect` lookup in `internal/sandbox/scan.go` to parse the PR code and determine the exact enclosing function name for each finding, ensuring `finding_id` is a stable SHA256 of `rule_id|file|function`.
 - **Testing**: Confirmed `go test ./...` passes. Ran local Docker scan against `testdata/` twice; diffed `finding_id`s between runs, producing an exact match. Finally, modified `testdata/authz_check.go` to add blank lines above the vulnerable function, re-ran the scan, and proved the `finding_id` remained completely unchanged despite the line number shift, fully validating the stability of the Output Contract finding_id design.
+2026-11-01: Layer 2 — policy (OPA/Rego) library, harness, and cmd/scan wiring
+Done
+- Added AGENTS.md and docs/layer2-plan.md (commit ed34411, branch docs/layer2-plan).
+- internal/policy: policy.rego (severity x confidence table), policy.go (Evaluate(report.ScanReport): per-finding decisions + strictest overall, suppressed skipped, null risk_context neutral, scanner ERROR/WARNING/INFO mapped to high/medium/low, unknown severity/confidence is an error), policy_test.go (commit 05393a1, branch feat/layer2-policy). OPA github.com/open-policy-agent/opa v1.22.0 added; yaml.v3 promoted to direct by go mod tidy.
+- cmd/scan: after printing findings, calls policy.Evaluate and prints "id=<finding_id> decision=<...>" per finding plus "overall decision=<...>". Exit 1 if overall is block, 0 otherwise, 2 on error (uncommitted at time of writing).
+Verified (commands run, output seen)
+- go test ./internal/policy -v: all pass (24 table cells, scanner-name mapping, empty report, suppressed, mixed severities, unknown values).
+- go build ./... && go test ./... && bash scanner/build.sh && go run ./cmd/scan testdata: build and tests ok; image build steps all CACHED (scanner.py/rules unchanged); scan printed the 3 baseline findings with unchanged ids 511e932569afaf29 (CWE-78), f3edc922dd9db12d (CWE-862), 9fa48477df57d893 (CWE-918); decisions warn/warn/warn, overall warn, exit code 0.
+Not verified
+- cmd/server and the live Check Run are untouched and were not exercised; Layer 2 is not wired into them.
+- Rego table cells other than confirmed/medium=block and unconfirmed/high=warn are project decisions, not spec-derived.
+- Present (non-null) risk_context is accepted but has no effect; not exercised with real Layer 3 data.
+Decided
+- OPA used (no pure-Go placeholder needed). Unknown severity/confidence fails with an error rather than defaulting.
+- Behavior change in cmd/scan only: baseline CWE-78 (unconfirmed/high) is now warn, so cmd/scan exits 0 where it previously exited 1 on any finding. cmd/server unchanged.
+Next
+- Review/merge feat/layer2-policy; decide when Check Run mapping (block->failure, warn->neutral, note->success) gets wired into cmd/server (plan: Week 5).
+- Decide whether any rule may emit `likely` confidence.
+
+2026-11-01 (later): Layer 2 live wiring, SHADOW MODE (branch feat/layer2-live)
+Done
+- internal/policy: added ConclusionFor(decision) (block->failure, warn->neutral, note->success, unknown->failure) plus TestConclusionFor.
+- cmd/server/main.go: after the scan, calls policy.Evaluate and logs "Policy (shadow): id=... decision=...", and "overall=... would_conclude=..."; on error logs "Policy (shadow) error". Check Run (ghapi.CompleteCheckRun) and PR comment untouched, so live behavior is unchanged.
+Verified (commands run, output seen)
+- go build ./... && go test ./... && bash scanner/build.sh && go run ./cmd/scan testdata: passed; image steps ran (scanner.py/rules copy steps shown); 3 baseline ids unchanged (511e932569afaf29, f3edc922dd9db12d, 9fa48477df57d893); decisions warn/warn/warn, overall warn, exit 0.
+- go test ./internal/policy -run TestConclusionFor -v: all 5 cases pass.
+Not verified
+- The server shadow logging was only compiled, not run: no deploy and no real webhook/PR exercised.
+- gofmt -l lists internal/rules/catalog/cwe-918-ssrf/rule.go and internal/sandbox/scan.go (not touched by this change).
+Decided
+- Shadow mode first: Check Run still uses the old ERROR->failure / else neutral logic. With the current table nothing can block (all findings unconfirmed), so live mode would turn the CWE-78 failure into neutral.
+Next
+- Human deploys; open a PR on authgraph-demo with the fixtures and read journalctl for the Policy (shadow) lines.
+- Then switch CompleteCheckRun to the policy conclusion, together with a decision on letting CWE-78 emit `likely`.
+
+2026-11-01 (later still): shadow-mode build deployed and tested live
+Done
+- Built linux/amd64 binary from feat/layer2-live (sha256 39ce400d...de04), scp'd to the EC2 box, kept the previous binary as /home/ubuntu/authgraph/authgraph-bot.bak (old sha256 bd081b45...07d1), stopped/swapped/started authgraph.service. Done by the agent at the user's explicit request (an exception to the AGENTS.md no-ssh rule).
+- Pushed branch test/layer2-shadow (at 7cdab5e, the vulnerable fixtures) to cOmrade3267/authgraph-demo and opened PR #2 via gh.
+Verified (commands run, output seen)
+- Server sha256 of the uploaded file matched the local build; systemctl is-active = active; journal: "AuthGraph bot listening on port 16666"; GET https://authgraph.duckdns.org/ returned {"status": "AuthGraph bot is running"}.
+- PR #2 journal lines: "Scan complete: 3 findings (ERROR:1 WARNING:2)", three "Policy (shadow): id=... decision=warn", "Policy (shadow): overall=warn would_conclude=neutral", then check run completed and comment posted. `gh pr checks 2` showed the Check Run as "fail" (the unchanged old ERROR->failure logic), confirming shadow mode did not change live behavior.
+Not verified
+- Memory behavior of the 32 MB binary (OPA) on the 908 MB box beyond one scan (free -m after restart: 364 used, 543 available).
+- Rollback was not exercised.
+Decided
+- Live conclusion is NOT switched to policy yet: shadow shows overall=warn would_conclude=neutral for a PR the live check marks failed.
+Next
+- Decide whether CWE-78 may emit `likely` (so it still blocks), then switch CompleteCheckRun to the policy conclusion.
+- Close PR #2 / delete test/layer2-shadow on the demo repo when no longer needed.
+Rollback: ssh to the box, `cd /home/ubuntu/authgraph && sudo systemctl stop authgraph && cp -p authgraph-bot.bak authgraph-bot && sudo systemctl start authgraph`.
