@@ -236,3 +236,20 @@ Next
 Done: created test/layer2-block-demo on authgraph-demo (main + run.go only) and opened PR #4. PRs #2, #3, #4 are kept open on purpose as demo artifacts (not part of the project code; not to be merged).
 Verified: PR #4 live: 1 finding (ERROR), Policy decision=block, overall=block conclusion=failure; Check Run via the API: conclusion=failure, title "1 finding(s), policy: block".
 Demo set: #2 success (fix commit), #3 neutral (CWE-862+918 warn-only), #4 failure (CWE-78 block).
+
+2026-11-02: Layer 5 polish — PR comment / Check Run rendering (branch feat/layer5-render)
+Done
+- internal/ghapi/comment.go: FormatReportAsComment rewritten (one renderer, used for both the PR comment and the Check Run summary). Shows headline policy decision, per-finding decision icon, CWE, severity, confidence, repo-relative path:line, function name, message, snippet (code-fenced, capped at 15 lines / 1500 chars) and references; counts findings beyond 10 and suppressed findings; fails closed with a visible message if the policy errors. Untrusted text (paths, messages, snippets) is sanitized: code spans/fences that cannot be broken out of, HTML escaped, @mentions neutralized.
+- internal/ghapi/checkrun.go: "SentryGrep Security Scan" -> "AuthGraph Security Scan" (3 places) and the in-progress summary text.
+- internal/ghapi/comment_test.go: 11 cases (empty report, block/warn headline, mixed, backtick-fence breakout, HTML/@mention/backtick-in-path, long snippet, >10 findings, suppressed, unknown severity fail-closed, missing function).
+Verified (commands run, output seen)
+- gofmt -l and go vet on internal/ghapi clean; go build ./... and go test ./... pass; scan baseline ids unchanged (511e932569afaf29 block, f3edc922dd9db12d warn, 9fa48477df57d893 warn; overall block).
+- Rendered a sample report and read the output (headline, decisions, function, snippet, references all present).
+Not verified
+- NOT deployed: the live server still renders the old comment and the old check name. Not exercised through GitHub.
+- Markdown rendering on github.com (only inspected as text).
+Decided
+- The Check Run name changes on new scans only; existing demo PRs #2/#3/#4 keep the old "SentryGrep" check until re-scanned (left untouched for the demo). No branch protection requires the old name.
+- Known gap left alone: Check Run and comment still show identical content (the Layer 5 duplication decision remains open).
+Next
+- Review the PR, then deploy and view on a new demo PR. Layer 3: a terraform repo (cOmrade3267/terraform-aws-dev-lab) was offered as the IaC source; plan before code.
