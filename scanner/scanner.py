@@ -16,6 +16,7 @@ Exit codes:
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import yaml
@@ -66,40 +67,66 @@ def run_semgrep(target: str, rules_dir: str) -> dict:
     return json.loads(result.stdout)
 
 
-def get_references_for_rule(rules_dir: str, rule_id: str) -> list:
-    """
-    Look up the references in meta.yaml for the given rule_id.
-    We assume rules are in subdirectories, e.g. rules/cwe-78/rule.yaml and rules/cwe-78/meta.yaml
-    """
-    # The rule_id in semgrep might look like 'scanner.rules.cwe-78-cmdinject.rule.go-cwe-78-shell-command-injection-direct'
-    # or it might just be the ID defined in the yaml file.
-    # Semgrep check_id usually ends with the actual rule id from the yaml.
-    # It's easier to just search all meta.yaml files in rules_dir.
+def load_rule_references(rules_dir: str) -> dict:
+    rule_references = {}
     path = Path(rules_dir)
     if not path.is_dir():
-        return []
-    
-    for meta_file in path.rglob("meta.yaml"):
+        return rule_references
+
+    for entry in path.iterdir():
+        if not entry.is_dir():
+            continue
+        rule_file = entry / "rule.yaml"
+        meta_file = entry / "meta.yaml"
+        if not (rule_file.is_file() and meta_file.is_file()):
+            continue
+
         try:
             with open(meta_file, "r") as f:
-                meta = yaml.safe_load(f)
-                # Compare against the actual rule_id or check if it matches the folder name
-                # Since multiple rule IDs could be in one rule.yaml, 
-                # let's just use the meta.yaml in the same folder if we know the rule ID belongs to it.
-                # Actually, the simplest is if the meta_file has a 'rule_id' field matching our suffix.
-                # Wait, the meta.yaml has a 'rule_id' field? Let's check. 
-                # Yes, in the setup it usually does. If not, we can fall back to checking if rule_id contains the folder name.
-                # Let's just return the references if we find a match, or if there's only one.
-                # Let's check meta.yaml contents.
-                # If rule_id from Semgrep ends with the rule_id in meta.yaml
-                if meta and "rule_id" in meta and rule_id.endswith(meta["rule_id"]):
-                    return meta.get("references", [])
-        except Exception:
-            pass
+                meta = yaml.safe_load(f) or {}
+            references = meta.get("references") or []
+
+            with open(rule_file, "r") as f:
+                rule_data = yaml.safe_load(f) or {}
+
+            for r in rule_data.get("rules", []):
+                if isinstance(r, dict) and "id" in r:
+                    rule_references[r["id"]] = references
+        except Exception as e:
+            print(f"WARNING: Failed to load rule references from {entry}: {e}", file=sys.stderr)
+            continue
+
+    return rule_references
+
+
+def get_references_for_rule(check_id_or_rules_dir: str, rule_references_or_check_id=None, rule_references: dict = None, rules_dir: str = None) -> list:
+    if isinstance(rule_references_or_check_id, dict):
+        check_id = check_id_or_rules_dir
+        rule_refs = rule_references_or_check_id
+    elif isinstance(rule_references_or_check_id, str):
+        check_id = rule_references_or_check_id
+        rule_refs = rule_references if rule_references is not None else load_rule_references(check_id_or_rules_dir)
+        if rules_dir is None:
+            rules_dir = check_id_or_rules_dir
+    else:
+        check_id = check_id_or_rules_dir
+        rule_refs = rule_references if rule_references is not None else load_rule_references("rules")
+
+    matching_ids = [rid for rid in rule_refs if check_id == rid or check_id.endswith("." + rid)]
+    if matching_ids:
+        best_id = max(matching_ids, key=len)
+        return rule_refs[best_id]
+
+    rules_prefix = Path(rules_dir).name + "." if rules_dir else "rules."
+    if check_id.startswith("rules.") or check_id.startswith(rules_prefix):
+        print(f"WARNING: No references found for {check_id}", file=sys.stderr)
+
     return []
 
 
-def parse_results(raw: dict, rules_dir: str) -> dict:
+def parse_results(raw: dict, rules_dir: str, rule_references: dict = None, target: str = None) -> dict:
+    if rule_references is None:
+        rule_references = load_rule_references(rules_dir)
     findings = []
     by_severity = {"ERROR": 0, "WARNING": 0, "INFO": 0}
     by_cwe = {}
@@ -115,6 +142,20 @@ def parse_results(raw: dict, rules_dir: str) -> dict:
             cwe = "UNCLASSIFIED"
 
         snippet = result["extra"].get("lines", "").strip()
+        if not snippet or snippet == "requires login":
+            target_prefix = (os.path.realpath(target) + os.sep) if target else ""
+            real_path = os.path.realpath(result["path"])
+            if target and not real_path.startswith(target_prefix):
+                snippet = ""
+            else:
+                try:
+                    with open(result["path"], "r") as f:
+                        file_lines = f.readlines()
+                    start_line = max(1, result["start"]["line"])
+                    end_line = result["end"]["line"]
+                    snippet = "".join(file_lines[start_line - 1 : end_line]).rstrip()
+                except Exception:
+                    snippet = ""
         rule_id = result["check_id"]
         filepath = result["path"]
         line = result["start"]["line"]
@@ -127,6 +168,7 @@ def parse_results(raw: dict, rules_dir: str) -> dict:
         # We don't have a reliable function name in standard Semgrep JSON without custom metavars,
         # so fallback to rule_id|file|line
         
+        # provisional — the Go side (internal/sandbox/scan.go) recomputes finding_id from rule_id|file|function.
         hash_input = f"{rule_id}|{filepath}|{line}"
         if function_name:
             hash_input = f"{rule_id}|{filepath}|{function_name}"
@@ -162,7 +204,7 @@ def parse_results(raw: dict, rules_dir: str) -> dict:
                 },
                 "dynamic": None
             },
-            "references": get_references_for_rule(rules_dir, rule_id)
+            "references": get_references_for_rule(rule_id, rule_references, rules_dir=rules_dir)
         }
 
         findings.append(finding)
@@ -241,8 +283,9 @@ def main():
 
     args = parser.parse_args()
 
+    rule_references = load_rule_references(args.rules)
     raw = run_semgrep(args.target, args.rules)
-    report = parse_results(raw, args.rules)
+    report = parse_results(raw, args.rules, rule_references, target=args.target)
 
     write_report(report, args.output)
     print_summary(report)
