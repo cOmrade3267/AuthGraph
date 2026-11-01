@@ -66,6 +66,21 @@ func normSeverity(s string) (string, error) {
 	return "", fmt.Errorf("unknown severity %q", s)
 }
 
+// ConclusionFor maps an overall decision to a GitHub Check Run conclusion
+// (block->failure, warn->neutral, note->success). Unknown decisions map to
+// failure so a bad value can never silently pass.
+func ConclusionFor(decision string) string {
+	switch decision {
+	case Block:
+		return "failure"
+	case Warn:
+		return "neutral"
+	case Note:
+		return "success"
+	}
+	return "failure"
+}
+
 func rank(d string) int {
 	switch d {
 	case Block:

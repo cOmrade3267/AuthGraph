@@ -16,6 +16,7 @@ import (
 	"github.com/cOmrade3267/authgraph/internal/auth"
 	"github.com/cOmrade3267/authgraph/internal/fetch"
 	"github.com/cOmrade3267/authgraph/internal/ghapi"
+	"github.com/cOmrade3267/authgraph/internal/policy"
 	"github.com/cOmrade3267/authgraph/internal/sandbox"
 )
 
@@ -221,6 +222,17 @@ func processEvent(event PullRequestEvent) {
 
 	log.Printf("Scan complete: %d findings (by severity: %v)",
 		report.TotalFindings, report.BySeverity)
+
+	// Layer 2 SHADOW MODE: evaluate and log only. The Check Run conclusion below
+	// is still decided by ghapi.CompleteCheckRun exactly as before.
+	if result, err := policy.Evaluate(*report); err != nil {
+		log.Printf("Policy (shadow) error: %v", err)
+	} else {
+		for _, d := range result.Findings {
+			log.Printf("Policy (shadow): id=%s decision=%s", d.FindingID, d.Decision)
+		}
+		log.Printf("Policy (shadow): overall=%s would_conclude=%s", result.Overall, policy.ConclusionFor(result.Overall))
+	}
 
 	if checkRunID != 0 {
 		if err := ghapi.CompleteCheckRun(installToken.Token, owner, repo, checkRunID, report); err != nil {

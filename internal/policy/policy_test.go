@@ -139,3 +139,14 @@ func TestUnknownValuesAreErrorsNotPasses(t *testing.T) {
 		}
 	})
 }
+
+func TestConclusionFor(t *testing.T) {
+	cases := map[string]string{Block: "failure", Warn: "neutral", Note: "success", "": "failure", "bogus": "failure"}
+	for decision, wantConc := range cases {
+		t.Run("decision_"+decision+"_maps_to_"+wantConc, func(t *testing.T) {
+			if got := ConclusionFor(decision); got != wantConc {
+				t.Fatalf("ConclusionFor(%q) = %s, want %s", decision, got, wantConc)
+			}
+		})
+	}
+}

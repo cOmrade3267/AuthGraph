@@ -147,3 +147,19 @@ Decided
 Next
 - Review/merge feat/layer2-policy; decide when Check Run mapping (block->failure, warn->neutral, note->success) gets wired into cmd/server (plan: Week 5).
 - Decide whether any rule may emit `likely` confidence.
+
+2026-11-01 (later): Layer 2 live wiring, SHADOW MODE (branch feat/layer2-live)
+Done
+- internal/policy: added ConclusionFor(decision) (block->failure, warn->neutral, note->success, unknown->failure) plus TestConclusionFor.
+- cmd/server/main.go: after the scan, calls policy.Evaluate and logs "Policy (shadow): id=... decision=...", and "overall=... would_conclude=..."; on error logs "Policy (shadow) error". Check Run (ghapi.CompleteCheckRun) and PR comment untouched, so live behavior is unchanged.
+Verified (commands run, output seen)
+- go build ./... && go test ./... && bash scanner/build.sh && go run ./cmd/scan testdata: passed; image steps ran (scanner.py/rules copy steps shown); 3 baseline ids unchanged (511e932569afaf29, f3edc922dd9db12d, 9fa48477df57d893); decisions warn/warn/warn, overall warn, exit 0.
+- go test ./internal/policy -run TestConclusionFor -v: all 5 cases pass.
+Not verified
+- The server shadow logging was only compiled, not run: no deploy and no real webhook/PR exercised.
+- gofmt -l lists internal/rules/catalog/cwe-918-ssrf/rule.go and internal/sandbox/scan.go (not touched by this change).
+Decided
+- Shadow mode first: Check Run still uses the old ERROR->failure / else neutral logic. With the current table nothing can block (all findings unconfirmed), so live mode would turn the CWE-78 failure into neutral.
+Next
+- Human deploys; open a PR on authgraph-demo with the fixtures and read journalctl for the Policy (shadow) lines.
+- Then switch CompleteCheckRun to the policy conclusion, together with a decision on letting CWE-78 emit `likely`.
