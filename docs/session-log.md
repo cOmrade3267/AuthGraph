@@ -231,3 +231,8 @@ Decided
 - Layer 4 (AuthzReplayVerifier) is the next layer to unlock blocking for CWE-862; Layer 3 does not change the policy outcome (risk_context has no effect yet).
 Next
 - Merge #17, then retarget/merge #18; close PRs #2 and #3 and delete test branches on the demo repo when done.
+
+2026-11-01 (late): block-demo PR for the presentation
+Done: created test/layer2-block-demo on authgraph-demo (main + run.go only) and opened PR #4. PRs #2, #3, #4 are kept open on purpose as demo artifacts (not part of the project code; not to be merged).
+Verified: PR #4 live: 1 finding (ERROR), Policy decision=block, overall=block conclusion=failure; Check Run via the API: conclusion=failure, title "1 finding(s), policy: block".
+Demo set: #2 success (fix commit), #3 neutral (CWE-862+918 warn-only), #4 failure (CWE-78 block).
